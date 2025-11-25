@@ -340,8 +340,13 @@
 
             <div class="controls">
                 <div class="control-group">
-                    <label for="refresh-interval">⏱️ بازه زمانی بروزرسانی (ثانیه):</label>
-                    <input type="number" id="refresh-interval" value="10" min="1" max="3600">
+                    <label for="batch-size">📦 تعداد محصولات در هر دسته:</label>
+                    <input type="number" id="batch-size" value="5" min="1" max="50">
+                </div>
+
+                <div class="control-group">
+                    <label for="batch-wait">⏱️ زمان انتظار بین دسته‌ها (ثانیه):</label>
+                    <input type="number" id="batch-wait" value="7" min="1" max="60">
                 </div>
 
                 <div class="control-group">
@@ -392,11 +397,14 @@
     <audio id="alarm-audio" src="alarm.wav" loop></audio>
 
     <script>
-        let refreshInterval = 10; // seconds
+        let batchSize = 5; // number of products per batch
+        let batchWait = 7; // seconds to wait between batches
         let targetPrice = 1000000; // default target price in Toman
         let updateTimer = null;
         let alarmActive = false;
         let alarmAudio = document.getElementById('alarm-audio');
+        let currentBatchIndex = 0; // track current batch
+        let allProducts = []; // store all products
 
         // Helper function to convert English numbers to Persian
         function toPersianNumber(num) {
@@ -447,10 +455,12 @@
 
         // Update settings
         function updateSettings() {
-            const intervalInput = document.getElementById('refresh-interval');
+            const batchSizeInput = document.getElementById('batch-size');
+            const batchWaitInput = document.getElementById('batch-wait');
             const targetPriceInput = document.getElementById('target-price');
 
-            refreshInterval = parseInt(intervalInput.value) || 10;
+            batchSize = parseInt(batchSizeInput.value) || 5;
+            batchWait = parseInt(batchWaitInput.value) || 7;
 
             // Parse Persian target price
             const targetPriceStr = toEnglishNumber(targetPriceInput.value);
@@ -459,6 +469,7 @@
             showNotification('تنظیمات با موفقیت اعمال شد');
 
             // Restart the update cycle
+            currentBatchIndex = 0;
             startAutoUpdate();
         }
 
@@ -475,25 +486,78 @@
             }
         }
 
-        // Fetch prices for all products
-        async function updatePrices() {
-            const statusBar = document.getElementById('status-bar');
-            statusBar.textContent = '🔄 در حال بروزرسانی قیمت‌ها...';
-
+        // Fetch price for a single product
+        async function fetchSinglePrice(index) {
             try {
-                const response = await fetch('/api/prices');
-                const prices = await response.json();
-
-                displayProducts(prices);
-
-                // Check for target price
-                checkPriceAlarms(prices);
-
-                const now = new Date().toLocaleString('fa-IR');
-                statusBar.textContent = `✅ آخرین بروزرسانی: ${now} | بروزرسانی بعدی در ${toPersianNumber(refreshInterval)} ثانیه`;
+                const response = await fetch(`/api/price/${index}`);
+                const priceData = await response.json();
+                return priceData;
             } catch (error) {
-                console.error('Error updating prices:', error);
-                statusBar.textContent = '❌ خطا در بروزرسانی قیمت‌ها';
+                console.error(`Error fetching price for product ${index}:`, error);
+                return null;
+            }
+        }
+
+        // Update prices for current batch
+        async function updateCurrentBatch() {
+            const statusBar = document.getElementById('status-bar');
+
+            if (allProducts.length === 0) {
+                allProducts = await fetchProducts();
+                if (allProducts.length === 0) {
+                    statusBar.textContent = 'هیچ محصولی برای بروزرسانی وجود ندارد';
+                    return;
+                }
+                // Initialize display with loading state
+                displayProducts(allProducts.map(p => ({ ...p, price: undefined })));
+            }
+
+            const totalBatches = Math.ceil(allProducts.length / batchSize);
+            const batchNumber = currentBatchIndex + 1;
+
+            // Calculate batch range
+            const startIdx = currentBatchIndex * batchSize;
+            const endIdx = Math.min(startIdx + batchSize, allProducts.length);
+
+            statusBar.textContent = `🔄 در حال بروزرسانی دسته ${toPersianNumber(batchNumber)} از ${toPersianNumber(totalBatches)} (محصولات ${toPersianNumber(startIdx + 1)} تا ${toPersianNumber(endIdx)})...`;
+
+            // Fetch prices for current batch
+            const pricePromises = [];
+            for (let i = startIdx; i < endIdx; i++) {
+                pricePromises.push(fetchSinglePrice(i));
+            }
+
+            const batchResults = await Promise.all(pricePromises);
+
+            // Update products with new prices
+            const updatedProducts = [...allProducts];
+            batchResults.forEach((result, idx) => {
+                if (result) {
+                    const productIdx = startIdx + idx;
+                    updatedProducts[productIdx] = {
+                        ...updatedProducts[productIdx],
+                        price: result.price,
+                        timestamp: result.timestamp
+                    };
+                }
+            });
+
+            allProducts = updatedProducts;
+            displayProducts(allProducts);
+
+            // Check for target price
+            checkPriceAlarms(allProducts);
+
+            // Move to next batch
+            currentBatchIndex++;
+
+            // If we've processed all batches, restart from beginning
+            if (currentBatchIndex >= totalBatches) {
+                currentBatchIndex = 0;
+                const now = new Date().toLocaleString('fa-IR');
+                statusBar.textContent = `✅ تمام محصولات بروزرسانی شد: ${now} | شروع دوباره در ${toPersianNumber(batchWait)} ثانیه`;
+            } else {
+                statusBar.textContent = `✅ دسته ${toPersianNumber(batchNumber)} بروزرسانی شد | دسته بعدی در ${toPersianNumber(batchWait)} ثانیه`;
             }
         }
 
@@ -603,7 +667,9 @@
                     urlInput.value = '';
 
                     // Refresh the products list
-                    await updatePrices();
+                    allProducts = [];
+                    currentBatchIndex = 0;
+                    await updateCurrentBatch();
                 } else {
                     showNotification('خطا در افزودن محصول: ' + result.error, true);
                 }
@@ -630,7 +696,9 @@
                     showNotification('محصول با موفقیت حذف شد');
 
                     // Refresh the products list
-                    await updatePrices();
+                    allProducts = [];
+                    currentBatchIndex = 0;
+                    await updateCurrentBatch();
                 } else {
                     showNotification('خطا در حذف محصول: ' + result.error, true);
                 }
@@ -640,7 +708,7 @@
             }
         }
 
-        // Start auto-update
+        // Start auto-update with batch processing
         function startAutoUpdate() {
             // Clear existing timer
             if (updateTimer) {
@@ -648,10 +716,10 @@
             }
 
             // Update immediately
-            updatePrices();
+            updateCurrentBatch();
 
-            // Set up recurring updates
-            updateTimer = setInterval(updatePrices, refreshInterval * 1000);
+            // Set up recurring batch updates
+            updateTimer = setInterval(updateCurrentBatch, batchWait * 1000);
         }
 
         // Initialize on page load
