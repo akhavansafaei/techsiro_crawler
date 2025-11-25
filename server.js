@@ -27,67 +27,48 @@ async function scrapePrice(url) {
 
     const $ = cheerio.load(response.data);
 
-    let prices = [];
+    // Target the specific structure used by techsiro.com
+    // Look for <p> elements with "font-bold" class that contain "تومان"
+    // Skip elements with "line-through" class (old prices)
+    let price = null;
 
-    // Collect all price elements, excluding crossed-out prices
-    $('*').each((i, elem) => {
+    $('p').each((i, elem) => {
       const $elem = $(elem);
-
-      // Skip if element or parent has strikethrough/line-through style (old prices)
-      const style = $elem.attr('style') || '';
-      const parentStyle = $elem.parent().attr('style') || '';
-      if (style.includes('line-through') || parentStyle.includes('line-through')) {
-        return;
-      }
-
-      // Skip if element has 'del' or 's' tag (strikethrough)
-      if ($elem.is('del, s') || $elem.parent().is('del, s')) {
-        return;
-      }
-
+      const elemClass = $elem.attr('class') || '';
       const text = $elem.text().trim();
 
-      // Match Persian/Arabic numbers with commas followed by تومان
-      const priceMatches = text.match(/([۰-۹0-9٬,]+)\s*تومان/g);
+      // Skip if this is a line-through price (old price)
+      if (elemClass.includes('line-through')) {
+        return;
+      }
 
-      if (priceMatches && text.length < 150) {
-        priceMatches.forEach(match => {
-          const priceMatch = match.match(/([۰-۹0-9٬,]+)\s*تومان/);
-          if (priceMatch) {
-            const priceText = priceMatch[1];
-            // Convert to English numbers for comparison
-            const priceNum = parseInt(toEnglishNumber(priceText));
+      // Skip if text contains discount/savings indicators
+      if (text.includes('سود') || text.includes('تخفیف') || text.includes('discount')) {
+        return;
+      }
 
-            // Only consider prices above 1000 Toman (filter out small numbers)
-            if (priceNum > 1000 && priceText.length >= 5) {
-              prices.push({
-                text: priceText,
-                value: priceNum,
-                elemTextLength: text.length
-              });
-            }
+      // Look for bold prices with "تومان"
+      if (elemClass.includes('font-bold') && text.includes('تومان')) {
+        const priceMatch = text.match(/([۰-۹0-9٬,]+)\s*تومان/);
+        if (priceMatch) {
+          const priceText = priceMatch[1];
+          const priceNum = parseInt(toEnglishNumber(priceText));
+
+          // Only consider valid prices
+          if (priceNum > 1000) {
+            price = priceText;
+            return false; // Stop iteration, we found the main price
           }
-        });
+        }
       }
     });
 
-    if (prices.length === 0) {
+    if (!price) {
       return null;
     }
 
-    // Sort by:
-    // 1. Prefer prices from shorter text elements (more likely to be the main price)
-    // 2. Among those, pick the largest price value (current price is usually prominent)
-    prices.sort((a, b) => {
-      // If text length difference is significant, prioritize shorter
-      if (Math.abs(a.elemTextLength - b.elemTextLength) > 50) {
-        return a.elemTextLength - b.elemTextLength;
-      }
-      // Otherwise, prefer larger price
-      return b.value - a.value;
-    });
-
-    return prices[0].text;
+    // Remove commas from the price text before returning
+    return price.replace(/[٬,]/g, '');
 
   } catch (error) {
     console.error(`Error scraping ${url}:`, error.message);
