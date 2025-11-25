@@ -27,57 +27,76 @@ async function scrapePrice(url) {
 
     const $ = cheerio.load(response.data);
 
-    // Try multiple selectors to find the price
-    let price = null;
+    let prices = [];
 
-    // Look for price in common patterns
-    // Method 1: Look for price with "تومان" text
+    // Collect all price elements, excluding crossed-out prices
     $('*').each((i, elem) => {
-      const text = $(elem).text().trim();
-      // Match Persian numbers with commas followed by تومان
-      const priceMatch = text.match(/([۰-۹0-9٬,]+)\s*تومان/);
-      if (priceMatch && !price) {
-        // Get the largest number (main price, not additional fees)
-        const priceText = priceMatch[1];
-        // Only consider it if it's a standalone price element (not in a paragraph with lots of text)
-        if (text.length < 100 && priceText.length > 5) {
-          price = priceText;
-        }
+      const $elem = $(elem);
+
+      // Skip if element or parent has strikethrough/line-through style (old prices)
+      const style = $elem.attr('style') || '';
+      const parentStyle = $elem.parent().attr('style') || '';
+      if (style.includes('line-through') || parentStyle.includes('line-through')) {
+        return;
+      }
+
+      // Skip if element has 'del' or 's' tag (strikethrough)
+      if ($elem.is('del, s') || $elem.parent().is('del, s')) {
+        return;
+      }
+
+      const text = $elem.text().trim();
+
+      // Match Persian/Arabic numbers with commas followed by تومان
+      const priceMatches = text.match(/([۰-۹0-9٬,]+)\s*تومان/g);
+
+      if (priceMatches && text.length < 150) {
+        priceMatches.forEach(match => {
+          const priceMatch = match.match(/([۰-۹0-9٬,]+)\s*تومان/);
+          if (priceMatch) {
+            const priceText = priceMatch[1];
+            // Convert to English numbers for comparison
+            const priceNum = parseInt(toEnglishNumber(priceText));
+
+            // Only consider prices above 1000 Toman (filter out small numbers)
+            if (priceNum > 1000 && priceText.length >= 5) {
+              prices.push({
+                text: priceText,
+                value: priceNum,
+                elemTextLength: text.length
+              });
+            }
+          }
+        });
       }
     });
 
-    // Method 2: Look for specific price classes or IDs (if Method 1 fails)
-    if (!price) {
-      const priceSelectors = [
-        '.product-price',
-        '.price',
-        '#product-price',
-        '[class*="price"]',
-        '[id*="price"]'
-      ];
-
-      for (const selector of priceSelectors) {
-        const elem = $(selector).first();
-        if (elem.length) {
-          const text = elem.text().trim();
-          const priceMatch = text.match(/([۰-۹0-9٬,]+)\s*تومان/);
-          if (priceMatch) {
-            price = priceMatch[1];
-            break;
-          }
-        }
-      }
+    if (prices.length === 0) {
+      return null;
     }
 
-    return price;
+    // Sort by:
+    // 1. Prefer prices from shorter text elements (more likely to be the main price)
+    // 2. Among those, pick the largest price value (current price is usually prominent)
+    prices.sort((a, b) => {
+      // If text length difference is significant, prioritize shorter
+      if (Math.abs(a.elemTextLength - b.elemTextLength) > 50) {
+        return a.elemTextLength - b.elemTextLength;
+      }
+      // Otherwise, prefer larger price
+      return b.value - a.value;
+    });
+
+    return prices[0].text;
+
   } catch (error) {
     console.error(`Error scraping ${url}:`, error.message);
     return null;
   }
 }
 
-// Helper function to convert Persian/Arabic numerals to English
-function convertToEnglishNumbers(str) {
+// Helper function to convert Persian/Arabic numerals to English (moved up for use in scrapePrice)
+function toEnglishNumber(str) {
   const persianNumbers = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
   const arabicNumbers = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
 
@@ -88,6 +107,9 @@ function convertToEnglishNumbers(str) {
   arabicNumbers.forEach((num, idx) => {
     result = result.replace(new RegExp(num, 'g'), idx.toString());
   });
+
+  // Remove commas and other non-numeric characters
+  result = result.replace(/[^0-9]/g, '');
 
   return result;
 }
