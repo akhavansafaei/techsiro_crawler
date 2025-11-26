@@ -143,19 +143,38 @@
             margin-bottom: 15px;
         }
 
+        .alarm-indicator .alarm-buttons {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-top: 20px;
+        }
+
         .alarm-indicator button {
-            padding: 15px 40px;
-            background: #d32f2f;
+            padding: 15px 30px;
             color: white;
             border: none;
             border-radius: 5px;
-            font-size: 18px;
+            font-size: 16px;
             cursor: pointer;
             font-weight: bold;
+            flex: 1;
         }
 
-        .alarm-indicator button:hover {
-            background: #b71c1c;
+        .alarm-indicator .btn-stop {
+            background: #757575;
+        }
+
+        .alarm-indicator .btn-stop:hover {
+            background: #616161;
+        }
+
+        .alarm-indicator .btn-goto {
+            background: #1976d2;
+        }
+
+        .alarm-indicator .btn-goto:hover {
+            background: #1565c0;
         }
 
         .add-product-form {
@@ -427,7 +446,10 @@
             <h2>🚨 هشدار! قیمت هدف رسیده است! 🚨</h2>
             <div class="sound-status" id="sound-status">🔊 در حال پخش صدای آلارم...</div>
             <p id="alarm-message"></p>
-            <button onclick="stopAlarm()">⏹️ خاموش کردن آلارم</button>
+            <div class="alarm-buttons">
+                <button class="btn-stop" onclick="stopAlarm()">⏹️ خاموش کردن</button>
+                <button class="btn-goto" onclick="stopAlarmAndGoToProduct()">🔗 رفتن به صفحه محصول</button>
+            </div>
         </div>
 
         <div class="add-product-form">
@@ -466,6 +488,7 @@
         let allProducts = []; // store all products
         let alarmRetryCount = 0; // Track retry attempts
         let alarmInterval = null; // For continuous alarm attempts
+        let currentAlarmProduct = null; // Store product that triggered the alarm
 
         // Initialize audio element
         function initAudio() {
@@ -759,6 +782,7 @@
 
             alarmActive = true;
             alarmRetryCount = 0;
+            currentAlarmProduct = product; // Store the product that triggered the alarm
 
             const alarmIndicator = document.getElementById('alarm-indicator');
             const alarmBackdrop = document.getElementById('alarm-backdrop');
@@ -801,6 +825,7 @@
         function stopAlarm() {
             alarmActive = false;
             alarmRetryCount = 0;
+            currentAlarmProduct = null;
 
             const alarmIndicator = document.getElementById('alarm-indicator');
             const alarmBackdrop = document.getElementById('alarm-backdrop');
@@ -822,6 +847,20 @@
 
             // Reset page title
             document.title = '🛒 Techsiro Price Monitor';
+        }
+
+        // Stop alarm and go to product page
+        function stopAlarmAndGoToProduct() {
+            if (currentAlarmProduct && currentAlarmProduct.url) {
+                // Open product page in new tab
+                window.open(currentAlarmProduct.url, '_blank');
+            }
+
+            // Stop the alarm
+            stopAlarm();
+
+            // Clear the stored product
+            currentAlarmProduct = null;
         }
 
         // Add new product
