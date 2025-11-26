@@ -107,16 +107,35 @@
             margin-bottom: 20px;
             text-align: center;
             display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 9999;
+            box-shadow: 0 0 50px rgba(0, 0, 0, 0.5);
+            min-width: 400px;
         }
 
         .alarm-indicator.active {
             display: block;
-            animation: pulse 1s infinite;
+            animation: pulse 0.5s infinite, shake 0.5s infinite;
         }
 
         @keyframes pulse {
-            0%, 100% { background: #fff3cd; }
-            50% { background: #ffe69c; }
+            0%, 100% {
+                background: #fff3cd;
+                border-color: #ffc107;
+            }
+            50% {
+                background: #ffe69c;
+                border-color: #ff6b6b;
+            }
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translate(-50%, -50%) rotate(0deg); }
+            25% { transform: translate(-50%, -50%) rotate(-2deg); }
+            75% { transform: translate(-50%, -50%) rotate(2deg); }
         }
 
         .alarm-indicator h2 {
@@ -331,6 +350,43 @@
                 transform: translateX(-50%) translateY(0);
             }
         }
+
+        .alarm-backdrop {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 9998;
+            display: none;
+        }
+
+        .alarm-backdrop.active {
+            display: block;
+            animation: fadeIn 0.3s;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .sound-status {
+            display: inline-block;
+            margin: 10px 0;
+            padding: 5px 15px;
+            background: #ff6b6b;
+            color: white;
+            border-radius: 5px;
+            font-size: 14px;
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
     </style>
 </head>
 <body>
@@ -365,10 +421,13 @@
             در حال بارگذاری...
         </div>
 
+        <div class="alarm-backdrop" id="alarm-backdrop"></div>
+
         <div class="alarm-indicator" id="alarm-indicator">
             <h2>🚨 هشدار! قیمت هدف رسیده است! 🚨</h2>
+            <div class="sound-status" id="sound-status">🔊 در حال پخش صدای آلارم...</div>
             <p id="alarm-message"></p>
-            <button onclick="stopAlarm()">خاموش کردن آلارم</button>
+            <button onclick="stopAlarm()">⏹️ خاموش کردن آلارم</button>
         </div>
 
         <div class="add-product-form">
@@ -402,9 +461,37 @@
         let targetPrice = 1000000; // default target price in Toman
         let updateTimer = null;
         let alarmActive = false;
-        let alarmAudio = document.getElementById('alarm-audio');
+        let alarmAudio = null; // Will be initialized after user interaction
         let currentBatchIndex = 0; // track current batch
         let allProducts = []; // store all products
+        let alarmRetryCount = 0; // Track retry attempts
+        let alarmInterval = null; // For continuous alarm attempts
+
+        // Initialize audio element
+        function initAudio() {
+            if (!alarmAudio) {
+                alarmAudio = document.getElementById('alarm-audio');
+                // Try to prepare the audio for playback
+                alarmAudio.load();
+            }
+        }
+
+        // Enable audio on first user interaction
+        function enableAudio() {
+            initAudio();
+            // Attempt to play and immediately pause to enable autoplay later
+            alarmAudio.play().then(() => {
+                alarmAudio.pause();
+                alarmAudio.currentTime = 0;
+                console.log('Audio enabled successfully');
+            }).catch(error => {
+                console.log('Audio enable failed (will retry on alarm):', error);
+            });
+        }
+
+        // Add click listener to enable audio on any user interaction
+        document.addEventListener('click', enableAudio, { once: true });
+        document.addEventListener('keydown', enableAudio, { once: true });
 
         // Helper function to convert English numbers to Persian
         function toPersianNumber(num) {
@@ -601,10 +688,67 @@
             }
         }
 
+        // Create a beep sound using Web Audio API as fallback
+        function playBeepSound() {
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+
+                oscillator.frequency.value = 800; // Frequency in Hz
+                oscillator.type = 'sine';
+
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+
+                oscillator.start(audioContext.currentTime);
+                oscillator.stop(audioContext.currentTime + 0.5);
+
+                console.log('✓ Playing beep sound');
+            } catch (error) {
+                console.error('Failed to play beep sound:', error);
+            }
+        }
+
+        // Play alarm sound with retries
+        async function playAlarmSound() {
+            initAudio();
+
+            // Try to play the audio file
+            try {
+                await alarmAudio.play();
+                console.log('✓ Alarm sound playing successfully');
+                return true;
+            } catch (error) {
+                console.error('Failed to play alarm (attempt ' + (alarmRetryCount + 1) + '):', error);
+
+                // Play beep as fallback
+                playBeepSound();
+
+                alarmRetryCount++;
+
+                // Retry up to 5 times
+                if (alarmRetryCount < 5) {
+                    setTimeout(() => {
+                        playAlarmSound();
+                    }, 500); // Wait 500ms before retry
+                }
+                return false;
+            }
+        }
+
         // Trigger alarm
         function triggerAlarm(product) {
+            if (alarmActive) return; // Prevent multiple alarms
+
             alarmActive = true;
+            alarmRetryCount = 0;
+
             const alarmIndicator = document.getElementById('alarm-indicator');
+            const alarmBackdrop = document.getElementById('alarm-backdrop');
             const alarmMessage = document.getElementById('alarm-message');
 
             alarmMessage.innerHTML = `
@@ -614,22 +758,57 @@
             `;
 
             alarmIndicator.classList.add('active');
+            alarmBackdrop.classList.add('active');
 
-            // Play alarm sound
-            alarmAudio.play().catch(error => {
-                console.error('Error playing alarm:', error);
-            });
+            // Play alarm sound immediately
+            playAlarmSound();
+
+            // Keep trying to play the alarm every 2 seconds
+            alarmInterval = setInterval(() => {
+                if (alarmActive) {
+                    initAudio();
+                    alarmAudio.currentTime = 0;
+                    playAlarmSound();
+                }
+            }, 2000);
+
+            // Make the page title flash
+            let originalTitle = document.title;
+            let titleInterval = setInterval(() => {
+                if (alarmActive) {
+                    document.title = document.title === originalTitle ? '🚨 هشدار قیمت! 🚨' : originalTitle;
+                } else {
+                    document.title = originalTitle;
+                    clearInterval(titleInterval);
+                }
+            }, 1000);
         }
 
         // Stop alarm
         function stopAlarm() {
             alarmActive = false;
+            alarmRetryCount = 0;
+
             const alarmIndicator = document.getElementById('alarm-indicator');
+            const alarmBackdrop = document.getElementById('alarm-backdrop');
+
             alarmIndicator.classList.remove('active');
+            alarmBackdrop.classList.remove('active');
+
+            // Clear the retry interval
+            if (alarmInterval) {
+                clearInterval(alarmInterval);
+                alarmInterval = null;
+            }
 
             // Stop alarm sound
-            alarmAudio.pause();
-            alarmAudio.currentTime = 0;
+            if (alarmAudio) {
+                alarmAudio.pause();
+                alarmAudio.currentTime = 0;
+            }
+
+            // Reset page title
+            document.title = '🛒 Techsiro Price Monitor';
         }
 
         // Add new product
