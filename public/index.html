@@ -715,6 +715,11 @@
 
         // Play alarm sound with retries
         async function playAlarmSound() {
+            // Check if alarm is still active before doing anything
+            if (!alarmActive) {
+                return false;
+            }
+
             initAudio();
 
             // Try to play the audio file
@@ -725,15 +730,23 @@
             } catch (error) {
                 console.error('Failed to play alarm (attempt ' + (alarmRetryCount + 1) + '):', error);
 
+                // Check again if alarm is still active before playing beep
+                if (!alarmActive) {
+                    return false;
+                }
+
                 // Play beep as fallback
                 playBeepSound();
 
                 alarmRetryCount++;
 
                 // Retry up to 5 times
-                if (alarmRetryCount < 5) {
+                if (alarmRetryCount < 5 && alarmActive) {
                     setTimeout(() => {
-                        playAlarmSound();
+                        // Check one more time before retrying
+                        if (alarmActive) {
+                            playAlarmSound();
+                        }
                     }, 500); // Wait 500ms before retry
                 }
                 return false;
